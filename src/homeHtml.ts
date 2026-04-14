@@ -126,6 +126,28 @@ export const blogHomeHtml = `<!doctype html>
         font-size: 12px;
         line-height: 1.5;
       }
+      .vault-panel {
+        margin-bottom: 12px;
+        padding: 14px;
+        border-radius: 16px;
+        background: #f9fafb;
+        border: 1px solid #e5e7eb;
+      }
+      .vault-panel-title {
+        margin: 0 0 6px;
+        font-size: 15px;
+        font-weight: 700;
+      }
+      .vault-panel-desc {
+        margin: 0 0 12px;
+        color: var(--muted);
+        font-size: 13px;
+      }
+      .vault-panel-actions {
+        display: flex;
+        gap: 10px;
+        flex-wrap: wrap;
+      }
       .unlock-badge {
         display: inline-flex;
         align-items: center;
@@ -633,7 +655,7 @@ export const blogHomeHtml = `<!doctype html>
             </div>
           </div>
           <div id="unlockBadge" class="unlock-badge hidden">✓ 已通过访问验证，只需输入本地解锁密钥</div>
-          <p id="loginDesc" class="login-desc">输入访问密码和本地解锁密钥后即可查看、搜索、复制和管理你的私人笔记。</p>
+          <p id="loginDesc" class="login-desc">先输入访问密码进入应用；如果记得本地解锁密钥，也可以一并输入直接解锁内容。</p>
 
           <div id="accessFieldGroup" class="field-stack">
             <label class="field-label" for="passwordInput">访问密码</label>
@@ -673,6 +695,19 @@ export const blogHomeHtml = `<!doctype html>
         </header>
 
         <div id="statusLine" class="status-line"></div>
+
+        <section id="vaultPanel" class="vault-panel hidden">
+          <h2 class="vault-panel-title">内容已加密</h2>
+          <p id="vaultPanelDesc" class="vault-panel-desc">请输入本地解锁密钥查看笔记内容。如果忘记了，只能清空旧密文后重新开始。</p>
+          <div class="field-stack">
+            <label class="field-label" for="vaultUnlockInput">本地解锁密钥</label>
+            <input id="vaultUnlockInput" class="input" type="password" placeholder="输入本地解锁密钥" />
+          </div>
+          <div class="vault-panel-actions">
+            <button id="unlockBtn" class="btn">解锁笔记</button>
+            <button id="resetVaultBtn" class="btn danger">忘记本地密钥，清空旧笔记</button>
+          </div>
+        </section>
 
         <main class="layout">
           <section class="card feed">
@@ -721,7 +756,8 @@ export const blogHomeHtml = `<!doctype html>
         sessionAuthenticated: false,
         vaultUnlocked: false,
         vaultKey: null,
-        vaultSalt: ''
+        vaultSalt: '',
+        noteCountMeta: 0
       };
 
       const els = {
@@ -742,6 +778,11 @@ export const blogHomeHtml = `<!doctype html>
         fabTopBtn: document.getElementById('fabTopBtn'),
         logoutBtn: document.getElementById('logoutBtn'),
         statusLine: document.getElementById('statusLine'),
+        vaultPanel: document.getElementById('vaultPanel'),
+        vaultPanelDesc: document.getElementById('vaultPanelDesc'),
+        vaultUnlockInput: document.getElementById('vaultUnlockInput'),
+        unlockBtn: document.getElementById('unlockBtn'),
+        resetVaultBtn: document.getElementById('resetVaultBtn'),
         noteCount: document.getElementById('noteCount'),
         noteList: document.getElementById('noteList'),
         editorModal: document.getElementById('editorModal'),
@@ -783,9 +824,21 @@ export const blogHomeHtml = `<!doctype html>
         els.accessFieldGroup.classList.toggle('hidden', unlockOnly);
         els.passwordInput.value = unlockOnly ? '' : els.passwordInput.value;
         els.loginDesc.textContent = unlockOnly
-          ? '请输入本地解锁密钥，浏览器会在本地解密你的笔记。'
-          : '输入访问密码和本地解锁密钥后即可查看、搜索、复制和管理你的私人笔记。';
-        els.loginBtn.textContent = unlockOnly ? '解锁我的笔记' : '解锁并进入笔记';
+          ? '你已经通过访问验证。现在只需要输入本地解锁密钥；如果忘记了，也可以先进应用后重置。'
+          : '先输入访问密码进入应用；如果记得本地解锁密钥，也可以一并输入直接解锁内容。';
+        els.loginBtn.textContent = unlockOnly ? '解锁我的笔记' : '进入应用';
+      }
+
+      function updateVaultUi() {
+        els.vaultPanel.classList.toggle('hidden', state.vaultUnlocked || !state.sessionAuthenticated);
+        els.searchInput.disabled = !state.vaultUnlocked;
+        els.searchBtn.disabled = !state.vaultUnlocked;
+        els.clearSearchBtn.disabled = !state.vaultUnlocked;
+        els.newBtn.disabled = !state.vaultUnlocked;
+        els.fabNewBtn.disabled = !state.vaultUnlocked;
+        els.vaultPanelDesc.textContent = state.noteCountMeta > 0
+          ? '你当前有 ' + state.noteCountMeta + ' 条已加密笔记。请输入本地解锁密钥查看内容；如果忘记了，只能清空旧密文后重新开始。'
+          : '当前还没有可显示的解密内容。输入本地解锁密钥后可正常使用。';
       }
 
       function bytesToBase64(bytes) {
@@ -811,6 +864,12 @@ export const blogHomeHtml = `<!doctype html>
         const data = await api('/api/crypto-config');
         state.vaultSalt = data.vaultSalt;
         return data;
+      }
+
+      async function refreshMeta() {
+        const data = await api('/api/health');
+        state.noteCountMeta = data.noteCount || 0;
+        updateVaultUi();
       }
 
       async function deriveVaultKey(passphrase, saltBase64) {
@@ -915,6 +974,7 @@ export const blogHomeHtml = `<!doctype html>
       function showApp() {
         els.loginView.classList.add('hidden');
         els.appView.classList.remove('hidden');
+        updateVaultUi();
       }
 
       function formatDate(ts) {
@@ -1004,6 +1064,12 @@ export const blogHomeHtml = `<!doctype html>
       function renderList() {
         els.noteList.innerHTML = '';
         els.noteCount.textContent = state.notes.length ? ('共 ' + state.notes.length + ' 条') : '0 条';
+
+        if (!state.vaultUnlocked) {
+          els.noteCount.textContent = state.noteCountMeta ? ('共 ' + state.noteCountMeta + ' 条（已加密）') : '0 条';
+          els.noteList.innerHTML = '<div class="empty-feed">正文已加密。登录站点后，再输入本地解锁密钥才能看到内容和搜索结果。</div>';
+          return;
+        }
 
         if (!state.notes.length) {
           els.noteList.innerHTML = '<div class="empty-feed">现在还没有笔记。点击右上角“新建笔记”，写第一条就行。</div>';
@@ -1120,6 +1186,7 @@ export const blogHomeHtml = `<!doctype html>
         if (!state.vaultUnlocked) {
           state.notes = [];
           state.allNotes = [];
+          await refreshMeta();
           renderList();
           return;
         }
@@ -1128,6 +1195,8 @@ export const blogHomeHtml = `<!doctype html>
         const data = await api('/api/notes');
         state.allNotes = await decryptNotes(data.notes || []);
         state.notes = filterNotes(state.allNotes, q);
+        state.noteCountMeta = state.allNotes.length;
+        updateVaultUi();
         state.expandedIds.forEach(function (id) {
           if (!state.notes.find(function (note) { return note.id === id; })) {
             state.expandedIds.delete(id);
@@ -1213,13 +1282,23 @@ export const blogHomeHtml = `<!doctype html>
         await refreshNotes();
       }
 
+      async function resetEncryptedNotes() {
+        await api('/api/reset-encrypted-notes', { method: 'DELETE' });
+        state.notes = [];
+        state.allNotes = [];
+        state.noteCountMeta = 0;
+        state.expandedIds = new Set();
+        await refreshMeta();
+      }
+
       async function checkSession() {
         const data = await api('/api/session');
         if (data.authenticated) {
           state.sessionAuthenticated = true;
           state.vaultUnlocked = false;
           state.vaultKey = null;
-          showLogin();
+          showApp();
+          await refreshMeta();
         } else {
           state.sessionAuthenticated = false;
           state.vaultUnlocked = false;
@@ -1239,17 +1318,28 @@ export const blogHomeHtml = `<!doctype html>
             });
             state.sessionAuthenticated = true;
             els.passwordInput.value = '';
+            showApp();
+            await refreshMeta();
           }
 
-          await unlockVault(els.vaultPasswordInput.value);
-          els.vaultPasswordInput.value = '';
+          if (els.vaultPasswordInput.value.trim()) {
+            await unlockVault(els.vaultPasswordInput.value);
+            els.vaultPasswordInput.value = '';
+            els.vaultUnlockInput.value = '';
+            setStatus('已解锁本地密文');
+          } else {
+            setStatus('已进入应用，可稍后再解锁内容');
+          }
+
           els.loginStatus.textContent = '';
-          showApp();
-          setStatus('已解锁本地密文');
         } catch (error) {
+          if (!state.sessionAuthenticated) {
+            showLogin();
+          } else {
+            showApp();
+          }
           state.vaultUnlocked = false;
           state.vaultKey = null;
-          showLogin();
           els.loginStatus.textContent = error.message || '登录失败';
         }
       };
@@ -1258,6 +1348,10 @@ export const blogHomeHtml = `<!doctype html>
         input.addEventListener('keydown', function (event) {
           if (event.key === 'Enter') els.loginBtn.click();
         });
+      });
+
+      els.vaultUnlockInput.addEventListener('keydown', function (event) {
+        if (event.key === 'Enter') els.unlockBtn.click();
       });
 
       els.searchBtn.onclick = function () {
@@ -1296,6 +1390,38 @@ export const blogHomeHtml = `<!doctype html>
         openComposer(null);
       };
 
+      els.unlockBtn.onclick = function () {
+        unlockVault(els.vaultUnlockInput.value)
+          .then(function () {
+            els.vaultUnlockInput.value = '';
+            els.vaultPasswordInput.value = '';
+            setStatus('已解锁本地密文');
+          })
+          .catch(function (error) {
+            state.vaultUnlocked = false;
+            state.vaultKey = null;
+            updateVaultUi();
+            setStatus(error.message || '解锁失败');
+          });
+      };
+
+      els.resetVaultBtn.onclick = function () {
+        if (!confirm('忘记本地密钥后，旧的加密笔记无法恢复。确定清空当前加密笔记并重新开始吗？')) return;
+        resetEncryptedNotes()
+          .then(function () {
+            state.vaultUnlocked = false;
+            state.vaultKey = null;
+            els.vaultUnlockInput.value = '';
+            els.vaultPasswordInput.value = '';
+            updateVaultUi();
+            renderList();
+            setStatus('已清空旧密文笔记，可以重新开始');
+          })
+          .catch(function (error) {
+            setStatus(error.message || '重置失败');
+          });
+      };
+
       els.fabTopBtn.onclick = function () {
         window.scrollTo({ top: 0, behavior: 'smooth' });
       };
@@ -1307,7 +1433,9 @@ export const blogHomeHtml = `<!doctype html>
         state.sessionAuthenticated = false;
         state.vaultUnlocked = false;
         state.vaultKey = null;
+        state.noteCountMeta = 0;
         els.vaultPasswordInput.value = '';
+        els.vaultUnlockInput.value = '';
         showLogin();
         setStatus('');
       };
