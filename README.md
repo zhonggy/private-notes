@@ -7,6 +7,7 @@
 - 手机浏览器可直接使用
 - 已做基础 PWA 支持，可添加到主屏幕
 - 浏览器端端到端加密（E2EE）
+- 单密码登录与本地解密
 
 ## 一键部署到 Cloudflare
 
@@ -57,7 +58,7 @@ npx wrangler secret put COOKIE_SECRET
 
 说明：
 
-- `APP_PASSWORD`：登录密码
+- `APP_PASSWORD`：登录密码，同时也是本地解密使用的密码
 - `COOKIE_SECRET`：任意长随机字符串，建议 32 字符以上
 
 ### 6. 发布
