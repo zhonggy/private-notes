@@ -1,0 +1,2 @@
+APP_PASSWORD=change-this-password
+COOKIE_SECRET=change-this-to-a-long-random-string
