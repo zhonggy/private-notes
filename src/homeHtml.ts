@@ -856,13 +856,13 @@ export const blogHomeHtml = `<!doctype html>
 
       function storeSessionPassphrase(passphrase) {
         try {
-          sessionStorage.setItem(SESSION_KEY, passphrase);
+          localStorage.setItem(SESSION_KEY, passphrase);
         } catch (error) {}
       }
 
       function readSessionPassphrase() {
         try {
-          return sessionStorage.getItem(SESSION_KEY) || '';
+          return localStorage.getItem(SESSION_KEY) || '';
         } catch (error) {
           return '';
         }
@@ -870,7 +870,7 @@ export const blogHomeHtml = `<!doctype html>
 
       function clearSessionPassphrase() {
         try {
-          sessionStorage.removeItem(SESSION_KEY);
+          localStorage.removeItem(SESSION_KEY);
         } catch (error) {}
       }
 
