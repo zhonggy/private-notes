@@ -263,6 +263,9 @@ export const blogHomeHtml = `<!doctype html>
       .fab-top {
         display: none;
       }
+      .hidden-when-modal {
+        transition: opacity .18s ease;
+      }
       .search {
         width: 100%;
         padding-right: 38px;
@@ -386,10 +389,6 @@ export const blogHomeHtml = `<!doctype html>
       .note-card-text.is-empty {
         color: var(--muted);
       }
-      .note-card-detail {
-        color: var(--muted);
-        margin: 8px 0 16px;
-      }
       .note-actions {
         display: flex;
         gap: 10px;
@@ -412,6 +411,7 @@ export const blogHomeHtml = `<!doctype html>
         display: grid;
         place-items: center;
         padding: 20px;
+        z-index: 80;
       }
       .modal-card {
         width: min(860px, 100%);
@@ -672,7 +672,7 @@ export const blogHomeHtml = `<!doctype html>
       </section>
 
       <section id="appView" class="hidden">
-        <header class="card topbar">
+        <header id="topbar" class="card topbar hidden-when-modal">
           <div>
             <h1 class="topbar-title">我的笔记</h1>
             <div class="topbar-subtitle">端到端加密 · 本地解锁 · 本地搜索</div>
@@ -736,8 +736,8 @@ export const blogHomeHtml = `<!doctype html>
         </div>
       </div>
     </div>
-    <button id="fabNewBtn" class="btn fab-new" type="button" aria-label="新建笔记">＋</button>
-    <button id="fabTopBtn" class="fab-top" type="button" aria-label="回到顶部">↑</button>
+    <button id="fabNewBtn" class="btn fab-new hidden-when-modal" type="button" aria-label="新建笔记">＋</button>
+    <button id="fabTopBtn" class="fab-top hidden-when-modal" type="button" aria-label="回到顶部">↑</button>
 
     <script>
       const state = {
@@ -764,6 +764,7 @@ export const blogHomeHtml = `<!doctype html>
         passwordInput: document.getElementById('passwordInput'),
         loginBtn: document.getElementById('loginBtn'),
         loginStatus: document.getElementById('loginStatus'),
+        topbar: document.getElementById('topbar'),
         searchInput: document.getElementById('searchInput'),
         clearSearchBtn: document.getElementById('clearSearchBtn'),
         searchBtn: document.getElementById('searchBtn'),
@@ -810,6 +811,15 @@ export const blogHomeHtml = `<!doctype html>
       function updateScrollUi() {
         const shouldShow = window.scrollY > 320;
         els.fabTopBtn.classList.toggle('show', shouldShow);
+      }
+
+      function updateModalUi() {
+        const open = !els.editorModal.classList.contains('hidden');
+        [els.topbar, els.fabNewBtn, els.fabTopBtn].forEach(function (el) {
+          if (!el) return;
+          el.style.opacity = open ? '0' : '';
+          el.style.pointerEvents = open ? 'none' : '';
+        });
       }
 
       function updateLoginMode() {
@@ -1118,10 +1128,6 @@ export const blogHomeHtml = `<!doctype html>
             title.className = 'note-card-title';
             title.innerHTML = highlightText(note.title || '无标题', els.searchInput.value.trim());
 
-            const preview = document.createElement('div');
-            preview.className = 'note-card-detail';
-            preview.innerHTML = highlightText(previewOf(note), els.searchInput.value.trim());
-
             const actions = document.createElement('div');
             actions.className = 'note-actions';
 
@@ -1170,7 +1176,6 @@ export const blogHomeHtml = `<!doctype html>
             actions.appendChild(editBtn);
             actions.appendChild(deleteBtn);
             card.appendChild(title);
-            card.appendChild(preview);
             card.appendChild(bodyWrap);
 
             if (displayContent.canExpand) {
@@ -1225,12 +1230,14 @@ export const blogHomeHtml = `<!doctype html>
         els.editorTitle.value = note ? note.title : '';
         els.editorContent.value = note ? note.content : '';
         els.editorModal.classList.remove('hidden');
+        updateModalUi();
         els.editorTitle.focus();
       }
 
       function closeComposer() {
         els.editorModal.classList.add('hidden');
         state.editingId = null;
+        updateModalUi();
       }
 
       async function saveComposer() {
@@ -1525,6 +1532,7 @@ export const blogHomeHtml = `<!doctype html>
 
       updateSearchUi();
       updateScrollUi();
+      updateModalUi();
       checkSession().catch(function () {
         showLogin();
       });
