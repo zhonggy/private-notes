@@ -48,14 +48,28 @@ export const blogHomeHtml = `<!doctype html>
         box-shadow: var(--shadow);
       }
       .login-wrap {
-        min-height: calc(100vh - 48px);
+        position: fixed;
+        inset: 0;
+        z-index: 100;
         display: grid;
         place-items: center;
-        padding: 24px 0;
+        min-height: 100vh;
+        padding: max(20px, env(safe-area-inset-top)) 16px max(20px, env(safe-area-inset-bottom));
+        background:
+          radial-gradient(circle at 50% 0%, rgba(7, 193, 96, 0.14), transparent 34%),
+          rgba(245, 245, 245, 0.88);
+        backdrop-filter: blur(18px);
+        -webkit-backdrop-filter: blur(18px);
       }
       .login-card {
         width: min(420px, 100%);
         padding: 28px;
+        box-shadow: 0 24px 70px rgba(15, 23, 42, 0.16);
+      }
+      .app-dimmed {
+        filter: blur(1px);
+        pointer-events: none;
+        user-select: none;
       }
       .login-brand {
         display: flex;
@@ -98,6 +112,10 @@ export const blogHomeHtml = `<!doctype html>
       .login-submit {
         width: 100%;
         height: 44px;
+      }
+      .login-submit:disabled {
+        opacity: .68;
+        cursor: wait;
       }
       .login-foot {
         margin-top: 12px;
@@ -441,7 +459,7 @@ export const blogHomeHtml = `<!doctype html>
           padding-bottom: calc(88px + env(safe-area-inset-bottom));
         }
         .login-wrap {
-          padding: 8px 0;
+          padding: max(14px, env(safe-area-inset-top)) 10px max(14px, env(safe-area-inset-bottom));
           min-height: 100dvh;
         }
         .login-card {
@@ -645,33 +663,34 @@ export const blogHomeHtml = `<!doctype html>
   </head>
   <body>
     <div class="page">
-      <section id="loginView" class="login-wrap hidden">
+      <section id="loginView" class="login-wrap">
         <div class="card login-card">
           <div class="login-brand">
             <div class="login-brand-icon">✎</div>
             <div>
               <div class="login-mini">Private Notes</div>
-              <h1 class="login-title">登录到我的笔记</h1>
+              <h1 id="loginTitle" class="login-title">正在打开我的笔记</h1>
             </div>
           </div>
           <div id="unlockBadge" class="unlock-badge hidden">✓ 已通过访问验证，只需输入密码解锁内容</div>
-          <p id="loginDesc" class="login-desc">输入密码后即可进入应用，并在本地解锁你的加密笔记。</p>
+          <p id="loginDesc" class="login-desc">正在检查当前设备的访问状态，页面会保持在原位。</p>
 
           <div class="field-stack">
             <label class="field-label" for="passwordInput">密码</label>
-            <input id="passwordInput" class="input" type="password" placeholder="输入密码" />
-            <div class="field-help">同一个密码同时用于访问站点和本地解密。</div>
+            <input id="passwordInput" class="input" type="password" placeholder="请稍候…" disabled />
+            <div id="passwordHelp" class="field-help">刷新时不再切换页面，只会显示这层锁屏。</div>
           </div>
 
           <div class="login-actions">
             <button id="loginBtn" class="btn login-submit">进入笔记</button>
+            <button id="loginResetBtn" class="btn secondary login-submit hidden" type="button" style="margin-top:10px">忘记密码，清空旧笔记</button>
           </div>
           <div class="security-note">端到端加密开启后，服务器只保存密文；搜索会在本地浏览器里完成。忘记密码将无法恢复旧密文。</div>
           <div id="loginStatus" class="login-foot"></div>
         </div>
       </section>
 
-      <section id="appView" class="hidden">
+      <section id="appView" class="app-dimmed">
         <header id="topbar" class="card topbar hidden-when-modal">
           <div>
             <h1 class="topbar-title">我的笔记</h1>
@@ -748,21 +767,23 @@ export const blogHomeHtml = `<!doctype html>
         searchTimer: null,
         statusTimer: null,
         sessionAuthenticated: false,
+        authMode: 'checking',
         vaultUnlocked: false,
         vaultKey: null,
         vaultSalt: '',
         noteCountMeta: 0,
         unlockError: ''
       };
-      const SESSION_KEY = 'private-notes-passphrase';
-
       const els = {
         loginView: document.getElementById('loginView'),
         appView: document.getElementById('appView'),
         unlockBadge: document.getElementById('unlockBadge'),
+        loginTitle: document.getElementById('loginTitle'),
         loginDesc: document.getElementById('loginDesc'),
         passwordInput: document.getElementById('passwordInput'),
+        passwordHelp: document.getElementById('passwordHelp'),
         loginBtn: document.getElementById('loginBtn'),
+        loginResetBtn: document.getElementById('loginResetBtn'),
         loginStatus: document.getElementById('loginStatus'),
         topbar: document.getElementById('topbar'),
         searchInput: document.getElementById('searchInput'),
@@ -823,16 +844,33 @@ export const blogHomeHtml = `<!doctype html>
       }
 
       function updateLoginMode() {
-        const unlockOnly = state.sessionAuthenticated && !state.vaultUnlocked;
+        const checking = state.authMode === 'checking';
+        const unlockOnly = state.authMode === 'unlock' || (state.sessionAuthenticated && !state.vaultUnlocked);
         els.unlockBadge.classList.toggle('hidden', !unlockOnly);
+        els.passwordInput.disabled = checking;
+        els.loginBtn.disabled = checking;
+        els.loginResetBtn.classList.toggle('hidden', checking || !unlockOnly);
+        if (checking) {
+          els.loginTitle.textContent = '正在打开我的笔记';
+          els.loginDesc.textContent = '正在检查当前设备的访问状态，页面会保持在原位。';
+          els.passwordInput.placeholder = '请稍候…';
+          els.passwordHelp.textContent = '刷新时不再切换页面，只会显示这层锁屏。';
+          els.loginBtn.textContent = '请稍候…';
+          return;
+        }
+        els.loginTitle.textContent = unlockOnly ? '解锁我的笔记' : '登录到我的笔记';
         els.loginDesc.textContent = unlockOnly
-          ? '你已经通过访问验证。现在输入同一个密码即可解锁内容；如果忘记了，也可以进入后清空旧密文重新开始。'
+          ? '你已经通过访问验证。现在输入密码解锁本地加密内容；刷新后不会再出现页面跳转。'
           : '输入密码后即可进入应用，并在本地解锁你的加密笔记。';
+        els.passwordInput.placeholder = unlockOnly ? '输入解锁密码' : '输入访问密码';
+        els.passwordHelp.textContent = unlockOnly
+          ? '密码只在本次页面会话中用于派生解密密钥，不再明文保存到 localStorage。'
+          : '同一个密码同时用于访问站点和本地解密。';
         els.loginBtn.textContent = unlockOnly ? '解锁我的笔记' : '进入笔记';
       }
 
       function updateVaultUi() {
-        els.vaultPanel.classList.toggle('hidden', state.vaultUnlocked || !state.sessionAuthenticated);
+        els.vaultPanel.classList.add('hidden');
         els.searchInput.disabled = !state.vaultUnlocked;
         els.searchBtn.disabled = !state.vaultUnlocked;
         els.clearSearchBtn.disabled = !state.vaultUnlocked;
@@ -864,24 +902,9 @@ export const blogHomeHtml = `<!doctype html>
         return bytes;
       }
 
-      function storeSessionPassphrase(passphrase) {
-        try {
-          localStorage.setItem(SESSION_KEY, passphrase);
-        } catch (error) {}
-      }
-
-      function readSessionPassphrase() {
-        try {
-          return localStorage.getItem(SESSION_KEY) || '';
-        } catch (error) {
-          return '';
-        }
-      }
-
-      function clearSessionPassphrase() {
-        try {
-          localStorage.removeItem(SESSION_KEY);
-        } catch (error) {}
+      function clearSensitiveInputs() {
+        els.passwordInput.value = '';
+        els.vaultUnlockInput.value = '';
       }
 
       async function getCryptoConfig() {
@@ -990,14 +1013,27 @@ export const blogHomeHtml = `<!doctype html>
       }
 
       function showLogin() {
+        state.authMode = state.sessionAuthenticated ? 'unlock' : 'login';
         els.loginView.classList.remove('hidden');
-        els.appView.classList.add('hidden');
+        els.appView.classList.add('app-dimmed');
+        updateLoginMode();
+      }
+
+      function showChecking() {
+        state.authMode = 'checking';
+        els.loginStatus.textContent = '';
+        els.loginView.classList.remove('hidden');
+        els.appView.classList.add('app-dimmed');
         updateLoginMode();
       }
 
       function showApp() {
-        els.loginView.classList.add('hidden');
-        els.appView.classList.remove('hidden');
+        if (state.sessionAuthenticated && state.vaultUnlocked) {
+          els.loginView.classList.add('hidden');
+          els.appView.classList.remove('app-dimmed');
+        } else {
+          showLogin();
+        }
         updateVaultUi();
       }
 
@@ -1301,7 +1337,6 @@ export const blogHomeHtml = `<!doctype html>
         state.vaultKey = await deriveVaultKey(passphrase, config.vaultSalt);
         state.vaultUnlocked = true;
         state.unlockError = '';
-        storeSessionPassphrase(passphrase);
         await refreshNotes();
       }
 
@@ -1315,88 +1350,57 @@ export const blogHomeHtml = `<!doctype html>
       }
 
       async function checkSession() {
+        showChecking();
         const data = await api('/api/session');
         if (data.authenticated) {
           state.sessionAuthenticated = true;
           state.vaultUnlocked = false;
           state.vaultKey = null;
           state.unlockError = '';
-          showApp();
           await refreshMeta();
-          const cachedPassphrase = readSessionPassphrase();
-          if (cachedPassphrase) {
-            try {
-              await unlockVault(cachedPassphrase);
-              setStatus('已自动恢复解锁状态');
-            } catch (error) {
-              clearSessionPassphrase();
-              state.vaultUnlocked = false;
-              state.vaultKey = null;
-              state.unlockError = '自动解锁失败，请重新输入密码';
-              updateVaultUi();
-            }
-          }
+          state.authMode = 'unlock';
+          showLogin();
+          renderList();
         } else {
-          const cachedPassphrase = readSessionPassphrase();
-          if (cachedPassphrase) {
-            try {
-              await api('/api/login', {
-                method: 'POST',
-                headers: { 'content-type': 'application/json' },
-                body: JSON.stringify({ password: cachedPassphrase })
-              });
-              state.sessionAuthenticated = true;
-              state.vaultUnlocked = false;
-              state.vaultKey = null;
-              state.unlockError = '';
-              showApp();
-              await refreshMeta();
-              await unlockVault(cachedPassphrase);
-              setStatus('已自动登录并恢复解锁');
-              return;
-            } catch (error) {
-              clearSessionPassphrase();
-            }
-          }
-
           state.sessionAuthenticated = false;
           state.vaultUnlocked = false;
           state.vaultKey = null;
           state.unlockError = '';
-          clearSessionPassphrase();
           showLogin();
+          renderList();
         }
       }
 
       els.loginBtn.onclick = async function () {
         try {
-          els.loginStatus.textContent = '登录中…';
+          const unlockOnly = state.sessionAuthenticated && !state.vaultUnlocked;
+          els.loginStatus.textContent = unlockOnly ? '解锁中…' : '登录中…';
           const password = els.passwordInput.value.trim();
           if (!password) throw new Error('请输入密码');
-          await api('/api/login', {
-            method: 'POST',
-            headers: { 'content-type': 'application/json' },
-            body: JSON.stringify({ password: password })
-          });
+          if (!unlockOnly) {
+            await api('/api/login', {
+              method: 'POST',
+              headers: { 'content-type': 'application/json' },
+              body: JSON.stringify({ password: password })
+            });
+          }
           state.sessionAuthenticated = true;
           await unlockVault(password);
-          els.passwordInput.value = '';
-          els.vaultUnlockInput.value = '';
+          clearSensitiveInputs();
           showApp();
-          setStatus('已登录并解锁');
+          setStatus(unlockOnly ? '已解锁' : '已登录并解锁');
 
           els.loginStatus.textContent = '';
         } catch (error) {
+          state.vaultUnlocked = false;
+          state.vaultKey = null;
           if (state.sessionAuthenticated) {
             state.unlockError = '当前密码无法解锁现有加密笔记';
-            showApp();
             await refreshMeta();
-            clearSessionPassphrase();
+            showLogin();
           } else {
             showLogin();
           }
-          state.vaultUnlocked = false;
-          state.vaultKey = null;
           els.loginStatus.textContent = error.message || '登录失败';
         }
       };
@@ -1462,24 +1466,26 @@ export const blogHomeHtml = `<!doctype html>
           });
       };
 
-      els.resetVaultBtn.onclick = function () {
+      function handleResetVault() {
         if (!confirm('忘记密码后，旧的加密笔记无法恢复。确定清空当前加密笔记并重新开始吗？')) return;
         resetEncryptedNotes()
           .then(function () {
             state.vaultUnlocked = false;
             state.vaultKey = null;
             state.unlockError = '';
-            clearSessionPassphrase();
-            els.vaultUnlockInput.value = '';
-            els.passwordInput.value = '';
+            clearSensitiveInputs();
             updateVaultUi();
             renderList();
+            showLogin();
             setStatus('已清空旧密文笔记，可以重新开始');
           })
           .catch(function (error) {
             setStatus(error.message || '重置失败');
           });
-      };
+      }
+
+      els.resetVaultBtn.onclick = handleResetVault;
+      els.loginResetBtn.onclick = handleResetVault;
 
       els.fabTopBtn.onclick = function () {
         window.scrollTo({ top: 0, behavior: 'smooth' });
@@ -1493,10 +1499,8 @@ export const blogHomeHtml = `<!doctype html>
         state.vaultUnlocked = false;
         state.vaultKey = null;
         state.noteCountMeta = 0;
-        els.vaultUnlockInput.value = '';
-        els.passwordInput.value = '';
+        clearSensitiveInputs();
         state.unlockError = '';
-        clearSessionPassphrase();
         showLogin();
         setStatus('');
       };

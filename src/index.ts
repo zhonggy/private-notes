@@ -1,4 +1,14 @@
 import { blogHomeHtml } from './homeHtml';
+import {
+	SESSION_MAX_AGE_SECONDS,
+	cleanupOldLoginRateLimits,
+	clearFailedLogins,
+	createSessionToken,
+	getLoginRateLimit,
+	isAuthed,
+	recordFailedLogin,
+	tooManyLoginAttempts,
+} from './auth';
 
 type AppEnv = Env & {
 	APP_PASSWORD?: string;
@@ -31,35 +41,6 @@ function html(content: string) {
 			'cache-control': 'no-store',
 		},
 	});
-}
-
-function getCookie(request: Request, name: string) {
-	const cookie = request.headers.get('cookie') || '';
-	const parts = cookie.split(';').map((item) => item.trim());
-	const prefix = name + '=';
-	for (const part of parts) {
-		if (part.startsWith(prefix)) return decodeURIComponent(part.slice(prefix.length));
-	}
-	return '';
-}
-
-async function sha256Hex(input: string) {
-	const buffer = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(input));
-	return Array.from(new Uint8Array(buffer))
-		.map((byte) => byte.toString(16).padStart(2, '0'))
-		.join('');
-}
-
-async function getSessionToken(env: AppEnv) {
-	if (!env.APP_PASSWORD || !env.COOKIE_SECRET) return '';
-	return sha256Hex(env.APP_PASSWORD + '|' + env.COOKIE_SECRET);
-}
-
-async function isAuthed(request: Request, env: AppEnv) {
-	if (!env.APP_PASSWORD || !env.COOKIE_SECRET) return true;
-	const session = getCookie(request, 'session');
-	if (!session) return false;
-	return session === (await getSessionToken(env));
 }
 
 function unauthorized() {
@@ -1017,16 +998,28 @@ export default {
 				return json({ ok: false, error: 'server auth not configured' }, 500);
 			}
 
+			const rateLimit = await getLoginRateLimit(request, env);
+			if (rateLimit.limited) {
+				return tooManyLoginAttempts(rateLimit.retryAfterSeconds);
+			}
+
 			const body = (await request.json().catch(() => null)) as { password?: string } | null;
 			if (!body?.password || body.password !== env.APP_PASSWORD) {
+				const failure = await recordFailedLogin(env, rateLimit.key);
+				if (failure.locked) {
+					return tooManyLoginAttempts(failure.retryAfterSeconds);
+				}
 				return unauthorized();
 			}
+
+			await clearFailedLogins(env, rateLimit.key);
+			await cleanupOldLoginRateLimits(env);
 
 			return json(
 				{ ok: true },
 				200,
 				{
-					'set-cookie': `session=${await getSessionToken(env)}; HttpOnly; Secure; SameSite=Lax; Path=/; Max-Age=2592000`,
+					'set-cookie': `session=${await createSessionToken(env)}; HttpOnly; Secure; SameSite=Lax; Path=/; Max-Age=${SESSION_MAX_AGE_SECONDS}`,
 				}
 			);
 		}
