@@ -15,7 +15,7 @@
 
 - `https://github.com/tao-t356/private-notes`
 
-可以直接使用下面的一键部署按钮：
+可以直接使用下面的一键部署按钮。Cloudflare 会根据 `wrangler.jsonc` 自动创建/绑定 D1，并根据 `.dev.vars.example` 提示填写 `APP_PASSWORD` 和 `COOKIE_SECRET`；发布脚本会先执行 D1 migrations 再部署 Worker：
 
 [![Deploy to Cloudflare](https://deploy.workers.cloudflare.com/button)](https://deploy.workers.cloudflare.com/?url=https://github.com/tao-t356/private-notes)
 
@@ -46,7 +46,7 @@ npx wrangler d1 create private-notes-db
 ### 4. 执行数据库迁移
 
 ```bash
-npx wrangler d1 migrations apply private-notes-db --remote
+npx wrangler d1 migrations apply DB --remote
 ```
 
 ### 5. 设置 secrets
@@ -64,7 +64,7 @@ npx wrangler secret put COOKIE_SECRET
 ### 6. 发布
 
 ```bash
-npx wrangler deploy
+npm run deploy
 ```
 
 部署完成后会得到一个 `workers.dev` 地址。
@@ -150,3 +150,4 @@ wrangler.jsonc
 - 搜索历史
 - 图片链接预览
 - 端到端加密版本
+
