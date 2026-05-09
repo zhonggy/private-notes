@@ -19,7 +19,6 @@ type AppEnv = Env & {
 	APP_PASSWORD?: string;
 	APP_PASSWORDS?: string;
 	COOKIE_SECRET?: string;
-	IMAGES?: R2Bucket;
 };
 
 type Note = {
@@ -31,15 +30,6 @@ type Note = {
 	vault_id?: string;
 };
 
-type ImageAsset = {
-	id: string;
-	vault_id: string;
-	object_key: string;
-	name: string;
-	type: string;
-	size: number;
-	created_at: number;
-};
 
 function json(data: unknown, status = 200, extraHeaders: Record<string, string> = {}) {
 	return new Response(JSON.stringify(data, null, 2), {
@@ -96,17 +86,6 @@ async function getNote(env: AppEnv, id: string, vaultId: string) {
 	)
 		.bind(id, vaultId)
 		.first<Note>();
-}
-
-async function getImageAsset(env: AppEnv, id: string, vaultId: string) {
-	return env.DB.prepare(
-		`SELECT id, vault_id, object_key, name, type, size, created_at
-		 FROM image_assets
-		 WHERE id = ? AND vault_id = ?
-		 LIMIT 1`
-	)
-		.bind(id, vaultId)
-		.first<ImageAsset>();
 }
 
 async function ensureAppMetaTable(env: AppEnv) {
@@ -175,22 +154,7 @@ async function ensureNotesSchema(env: AppEnv) {
 	).run();
 
 	await ensureAppMetaTable(env);
-	await env.DB.prepare(
-		`CREATE TABLE IF NOT EXISTS image_assets (
-			id TEXT PRIMARY KEY,
-			vault_id TEXT NOT NULL,
-			object_key TEXT NOT NULL,
-			name TEXT NOT NULL,
-			type TEXT NOT NULL,
-			size INTEGER NOT NULL,
-			created_at INTEGER NOT NULL
-		)`
-	).run();
 
-	await env.DB.prepare(
-		`CREATE INDEX IF NOT EXISTS idx_image_assets_vault_created_at
-		 ON image_assets(vault_id, created_at DESC)`
-	).run();
 }
 
 async function getMeta(env: AppEnv, key: string) {
@@ -1161,57 +1125,6 @@ export default {
 				.run();
 
 			return json({ ok: true, note }, 201);
-		}
-
-		if (url.pathname === '/api/images' && request.method === 'POST') {
-			if (!env.IMAGES) return json({ ok: false, error: 'image storage not configured' }, 500);
-			await ensureNotesSchema(env);
-			const vaultId = await getAuthedVaultId(request, env);
-			const encrypted = await request.arrayBuffer();
-			const size = encrypted.byteLength;
-			if (!size) return json({ ok: false, error: 'image body required' }, 400);
-			if (size > 8 * 1024 * 1024) return json({ ok: false, error: 'image too large' }, 413);
-
-			const id = crypto.randomUUID();
-			const name = decodeHeaderValue(request.headers.get('x-file-name') || 'image').slice(0, 160);
-			const type = (request.headers.get('x-file-type') || 'image/jpeg').slice(0, 80);
-			const objectKey = `${vaultId}/${id}.enc`;
-			const now = Date.now();
-
-			await env.IMAGES.put(objectKey, encrypted, {
-				httpMetadata: { contentType: 'application/octet-stream' },
-				customMetadata: { vaultId, name, type },
-			});
-
-			await env.DB.prepare(
-				`INSERT INTO image_assets (id, vault_id, object_key, name, type, size, created_at)
-				 VALUES (?, ?, ?, ?, ?, ?, ?)`
-			)
-				.bind(id, vaultId, objectKey, name, type, size, now)
-				.run();
-
-			return json({ ok: true, image: { id, name, type, size, created_at: now } }, 201);
-		}
-
-		if (url.pathname.startsWith('/api/images/') && request.method === 'GET') {
-			if (!env.IMAGES) return json({ ok: false, error: 'image storage not configured' }, 500);
-			await ensureNotesSchema(env);
-			const vaultId = await getAuthedVaultId(request, env);
-			const id = decodeURIComponent(url.pathname.slice('/api/images/'.length));
-			const asset = await getImageAsset(env, id, vaultId);
-			if (!asset) return json({ ok: false, error: 'not_found' }, 404);
-
-			const object = await env.IMAGES.get(asset.object_key);
-			if (!object) return json({ ok: false, error: 'not_found' }, 404);
-
-			return new Response(object.body, {
-				headers: {
-					'content-type': 'application/octet-stream',
-					'cache-control': 'private, no-store',
-					'x-file-name': encodeURIComponent(asset.name),
-					'x-file-type': asset.type,
-				},
-			});
 		}
 
 		if (url.pathname.startsWith('/api/notes/')) {

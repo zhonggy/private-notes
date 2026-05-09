@@ -195,17 +195,6 @@ export const blogHomeHtml = `<!doctype html>
         padding: 14px;
         resize: vertical;
       }
-      .editor-tools {
-        display: flex;
-        gap: 10px;
-        align-items: center;
-        flex-wrap: wrap;
-        margin: 12px 0 0;
-      }
-      .editor-tool-note {
-        color: var(--muted);
-        font-size: 12px;
-      }
       .input:focus, .textarea:focus {
         border-color: rgba(7, 193, 96, 0.65);
         box-shadow: 0 0 0 4px rgba(7, 193, 96, 0.12);
@@ -230,21 +219,6 @@ export const blogHomeHtml = `<!doctype html>
         background: #fef2f2;
         color: #b91c1c;
         box-shadow: none;
-      }
-      .note-image {
-        display: block;
-        max-width: 100%;
-        max-height: 420px;
-        margin: 10px 0;
-        border-radius: 16px;
-        border: 1px solid #e5e7eb;
-        background: #f9fafb;
-        object-fit: contain;
-      }
-      .note-image-placeholder {
-        margin: 8px 0;
-        color: var(--muted);
-        font-size: 13px;
       }
       .topbar {
         display: flex;
@@ -773,11 +747,6 @@ export const blogHomeHtml = `<!doctype html>
         <input id="editorTitle" class="input" placeholder="标题" />
         <div style="height:12px"></div>
         <textarea id="editorContent" class="textarea" placeholder="# 今天想到什么&#10;&#10;- 一条记录&#10;- 一个链接&#10;- 一个待办"></textarea>
-        <div class="editor-tools">
-          <button id="imageBtn" class="btn secondary" type="button">添加图片</button>
-          <span class="editor-tool-note">图片会先在浏览器端加密，再保存到 R2。</span>
-          <input id="imageInput" class="hidden" type="file" accept="image/*" />
-        </div>
         <div class="modal-actions">
           <button id="cancelBtn" class="btn secondary">取消</button>
           <button id="saveBtn" class="btn">保存</button>
@@ -832,8 +801,6 @@ export const blogHomeHtml = `<!doctype html>
         modalTitle: document.getElementById('modalTitle'),
         editorTitle: document.getElementById('editorTitle'),
         editorContent: document.getElementById('editorContent'),
-        imageBtn: document.getElementById('imageBtn'),
-        imageInput: document.getElementById('imageInput'),
         closeModalBtn: document.getElementById('closeModalBtn'),
         cancelBtn: document.getElementById('cancelBtn'),
         saveBtn: document.getElementById('saveBtn')
@@ -989,30 +956,6 @@ export const blogHomeHtml = `<!doctype html>
         }));
       }
 
-      async function encryptBytes(bytes) {
-        const iv = crypto.getRandomValues(new Uint8Array(12));
-        const cipher = await crypto.subtle.encrypt(
-          { name: 'AES-GCM', iv: iv },
-          state.vaultKey,
-          bytes
-        );
-
-        return new TextEncoder().encode(JSON.stringify({
-          iv: bytesToBase64(iv),
-          data: bytesToBase64(new Uint8Array(cipher))
-        }));
-      }
-
-      async function decryptBytes(encryptedBytes) {
-        const payload = JSON.parse(new TextDecoder().decode(encryptedBytes));
-        const plain = await crypto.subtle.decrypt(
-          { name: 'AES-GCM', iv: base64ToBytes(payload.iv) },
-          state.vaultKey,
-          base64ToBytes(payload.data)
-        );
-        return new Uint8Array(plain);
-      }
-
       async function decryptValue(value) {
         if (!isEncryptedValue(value)) return value || '';
 
@@ -1157,62 +1100,6 @@ export const blogHomeHtml = `<!doctype html>
         };
       }
 
-      function parseImageLine(line) {
-        const match = /^!\\[([^\\]]*)\\]\\(pn-image:([a-f0-9-]+)\\)$/.exec((line || '').trim());
-        return match ? { alt: match[1] || '图片', id: match[2] } : null;
-      }
-
-      async function loadEncryptedImage(id, img, placeholder, alt) {
-        try {
-          const res = await fetch('/api/images/' + encodeURIComponent(id), { credentials: 'same-origin' });
-          if (!res.ok) throw new Error('图片加载失败');
-          const fileType = res.headers.get('x-file-type') || 'image/jpeg';
-          const encryptedBytes = new Uint8Array(await res.arrayBuffer());
-          const plainBytes = await decryptBytes(encryptedBytes);
-          const blob = new Blob([plainBytes], { type: fileType });
-          const url = URL.createObjectURL(blob);
-          img.onload = function () {
-            placeholder.remove();
-          };
-          img.src = url;
-          img.alt = alt || '图片';
-        } catch (error) {
-          placeholder.textContent = '图片无法解密或加载失败';
-        }
-      }
-
-      function renderNoteContent(container, text) {
-        container.innerHTML = '';
-        const lines = (text || '').split('\\n');
-        let buffer = [];
-        function flushText() {
-          if (!buffer.length) return;
-          const block = document.createElement('div');
-          block.textContent = buffer.join('\\n');
-          container.appendChild(block);
-          buffer = [];
-        }
-
-        lines.forEach(function (line) {
-          const image = parseImageLine(line);
-          if (!image) {
-            buffer.push(line);
-            return;
-          }
-          flushText();
-          const placeholder = document.createElement('div');
-          placeholder.className = 'note-image-placeholder';
-          placeholder.textContent = '正在解密图片…';
-          const img = document.createElement('img');
-          img.className = 'note-image';
-          img.loading = 'lazy';
-          container.appendChild(placeholder);
-          container.appendChild(img);
-          loadEncryptedImage(image.id, img, placeholder, image.alt);
-        });
-        flushText();
-      }
-
       async function api(url, options) {
         const res = await fetch(url, Object.assign({ credentials: 'same-origin' }, options || {}));
         const data = await res.json().catch(function () { return {}; });
@@ -1309,11 +1196,7 @@ export const blogHomeHtml = `<!doctype html>
             const body = document.createElement('div');
             const displayContent = getDisplayContent(note);
             body.className = 'note-card-text' + (note.content ? '' : ' is-empty');
-            if (note.content) {
-              renderNoteContent(body, displayContent.text);
-            } else {
-              body.textContent = '这条笔记还没有内容。';
-            }
+            body.textContent = note.content ? displayContent.text : '这条笔记还没有内容。';
             const bodyWrap = document.createElement('div');
             bodyWrap.className = 'note-card-text-wrap' + (displayContent.canExpand && !displayContent.expanded ? ' collapsed' : '');
             bodyWrap.appendChild(body);
@@ -1440,49 +1323,6 @@ export const blogHomeHtml = `<!doctype html>
         setStatus('已删除');
       }
 
-      function insertTextAtCursor(textarea, text) {
-        const start = textarea.selectionStart || textarea.value.length;
-        const end = textarea.selectionEnd || textarea.value.length;
-        const before = textarea.value.slice(0, start);
-        const after = textarea.value.slice(end);
-        const prefix = before && !before.endsWith('\\n') ? '\\n' : '';
-        const suffix = after && !after.startsWith('\\n') ? '\\n' : '';
-        textarea.value = before + prefix + text + suffix + after;
-        const pos = (before + prefix + text).length;
-        textarea.focus();
-        textarea.setSelectionRange(pos, pos);
-      }
-
-      async function uploadImageFile(file) {
-        if (!file) return;
-        if (!state.vaultUnlocked || !state.vaultKey) {
-          setStatus('请先解锁后再上传图片');
-          return;
-        }
-        if (!file.type.startsWith('image/')) {
-          setStatus('请选择图片文件');
-          return;
-        }
-        if (file.size > 5 * 1024 * 1024) {
-          setStatus('图片不能超过 5MB');
-          return;
-        }
-
-        setStatus('正在加密并上传图片…');
-        const encryptedBytes = await encryptBytes(await file.arrayBuffer());
-        const data = await api('/api/images', {
-          method: 'POST',
-          headers: {
-            'content-type': 'application/octet-stream',
-            'x-file-name': encodeURIComponent(file.name || 'image'),
-            'x-file-type': file.type || 'image/jpeg'
-          },
-          body: encryptedBytes
-        });
-        insertTextAtCursor(els.editorContent, '![' + (file.name || '图片') + '](pn-image:' + data.image.id + ')');
-        setStatus('图片已插入');
-      }
-
       async function unlockVault(passphrase) {
         if (!passphrase) {
           throw new Error('请输入密码');
@@ -1595,18 +1435,6 @@ export const blogHomeHtml = `<!doctype html>
 
       els.fabNewBtn.onclick = function () {
         openComposer(null);
-      };
-
-      els.imageBtn.onclick = function () {
-        els.imageInput.click();
-      };
-
-      els.imageInput.onchange = function () {
-        const file = els.imageInput.files && els.imageInput.files[0];
-        els.imageInput.value = '';
-        uploadImageFile(file).catch(function (error) {
-          setStatus(error.message || '图片上传失败');
-        });
       };
 
       els.unlockBtn.onclick = function () {

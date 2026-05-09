@@ -1,6 +1,6 @@
 # Private Notes
 
-一个部署在 Cloudflare Workers + D1 + R2 上的简洁私人笔记。
+一个部署在 Cloudflare Workers + D1 上的简洁私人笔记。
 
 - 适合单人使用
 - 文本优先，支持搜索
@@ -15,7 +15,7 @@
 
 - `https://github.com/tao-t356/private-notes`
 
-可以直接使用下面的一键部署按钮。Cloudflare 会根据 `wrangler.jsonc` 自动创建/绑定 D1 和 R2，并根据 `.dev.vars.example` 提示填写 `APP_PASSWORD`、可选的 `APP_PASSWORDS` 和 `COOKIE_SECRET`；发布脚本会先执行 D1 migrations 再部署 Worker：
+可以直接使用下面的一键部署按钮。Cloudflare 会根据 `wrangler.jsonc` 自动创建/绑定 D1，并根据 `.dev.vars.example` 提示填写 `APP_PASSWORD`、可选的 `APP_PASSWORDS` 和 `COOKIE_SECRET`；发布脚本会先执行 D1 migrations 再部署 Worker：
 
 [![Deploy to Cloudflare](https://deploy.workers.cloudflare.com/button)](https://deploy.workers.cloudflare.com/?url=https://github.com/tao-t356/private-notes)
 
@@ -124,7 +124,6 @@ npx wrangler dev
 - 登录保护
 - 多密码多数据仓库隔离
 - 浏览器端端到端加密
-- 加密图片上传和显示（R2 只保存密文）
 - 笔记新建 / 编辑 / 删除
 - 本地标题和正文搜索
 - 按日期分组
@@ -146,6 +145,7 @@ wrangler.jsonc
 
 ## 当前限制
 
+- 不支持图片 / 附件上传
 - 更适合单用户而不是多人协作
 
 ## 推荐后续增强
