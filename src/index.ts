@@ -4,7 +4,12 @@ import {
 	cleanupOldLoginRateLimits,
 	clearFailedLogins,
 	createSessionToken,
+	getAuthedVaultId,
+	getConfiguredVaultCount,
 	getLoginRateLimit,
+	getSession,
+	getVaultIdForPassword,
+	isAuthConfigured,
 	isAuthed,
 	recordFailedLogin,
 	tooManyLoginAttempts,
@@ -12,6 +17,7 @@ import {
 
 type AppEnv = Env & {
 	APP_PASSWORD?: string;
+	APP_PASSWORDS?: string;
 	COOKIE_SECRET?: string;
 };
 
@@ -21,6 +27,7 @@ type Note = {
 	content: string;
 	created_at: number;
 	updated_at: number;
+	vault_id?: string;
 };
 
 function json(data: unknown, status = 200, extraHeaders: Record<string, string> = {}) {
@@ -47,25 +54,28 @@ function unauthorized() {
 	return json({ ok: false, error: 'unauthorized' }, 401);
 }
 
-async function listNotes(env: AppEnv) {
+async function listNotes(env: AppEnv, vaultId: string) {
 	const result = await env.DB.prepare(
 		`SELECT id, title, content, created_at, updated_at
 		 FROM notes
+		 WHERE vault_id = ?
 		 ORDER BY updated_at DESC
 		 LIMIT 1000`
-	).all<Note>();
+	)
+		.bind(vaultId)
+		.all<Note>();
 
 	return result.results ?? [];
 }
 
-async function getNote(env: AppEnv, id: string) {
+async function getNote(env: AppEnv, id: string, vaultId: string) {
 	return env.DB.prepare(
 		`SELECT id, title, content, created_at, updated_at
 		 FROM notes
-		 WHERE id = ?
+		 WHERE id = ? AND vault_id = ?
 		 LIMIT 1`
 	)
-		.bind(id)
+		.bind(id, vaultId)
 		.first<Note>();
 }
 
@@ -86,6 +96,7 @@ async function ensureNotesSchema(env: AppEnv) {
 	await env.DB.prepare(
 		`CREATE TABLE IF NOT EXISTS notes (
 			id TEXT PRIMARY KEY,
+			vault_id TEXT NOT NULL DEFAULT 'default',
 			title TEXT NOT NULL,
 			content TEXT NOT NULL,
 			created_at INTEGER NOT NULL,
@@ -93,9 +104,19 @@ async function ensureNotesSchema(env: AppEnv) {
 		)`
 	).run();
 
+	const columns = await env.DB.prepare('PRAGMA table_info(notes)').all<{ name: string }>();
+	if (!(columns.results ?? []).some((column) => column.name === 'vault_id')) {
+		await env.DB.prepare(`ALTER TABLE notes ADD COLUMN vault_id TEXT NOT NULL DEFAULT 'default'`).run();
+	}
+
 	await env.DB.prepare(
 		`CREATE INDEX IF NOT EXISTS idx_notes_updated_at
 		 ON notes(updated_at DESC)`
+	).run();
+
+	await env.DB.prepare(
+		`CREATE INDEX IF NOT EXISTS idx_notes_vault_updated_at
+		 ON notes(vault_id, updated_at DESC)`
 	).run();
 
 	await env.DB.prepare(
@@ -161,13 +182,14 @@ function bytesToBase64(bytes: Uint8Array) {
 	return btoa(binary);
 }
 
-async function getOrCreateVaultSalt(env: AppEnv) {
+async function getOrCreateVaultSalt(env: AppEnv, vaultId: string) {
 	await ensureNotesSchema(env);
-	const existing = await getMeta(env, 'vault_salt');
+	const key = vaultId === 'default' ? 'vault_salt' : `vault_salt:${vaultId}`;
+	const existing = await getMeta(env, key);
 	if (existing) return existing;
 
 	const salt = bytesToBase64(crypto.getRandomValues(new Uint8Array(16)));
-	await setMeta(env, 'vault_salt', salt);
+	await setMeta(env, key, salt);
 	return salt;
 }
 
@@ -978,23 +1000,29 @@ export default {
 
 		if (url.pathname === '/api/health' && request.method === 'GET') {
 			await ensureNotesSchema(env);
-			const result = await env.DB.prepare('SELECT COUNT(*) AS note_count FROM notes').first<{
+			const session = await getSession(request, env);
+			if (isAuthConfigured(env) && !session.authenticated) return unauthorized();
+			const result = await env.DB.prepare('SELECT COUNT(*) AS note_count FROM notes WHERE vault_id = ?')
+				.bind(session.vaultId)
+				.first<{
 				note_count: number;
 			}>();
 			return json({
 				ok: true,
 				noteCount: result?.note_count ?? 0,
-				authEnabled: Boolean(env.APP_PASSWORD && env.COOKIE_SECRET),
+				authEnabled: isAuthConfigured(env),
+				vaultCount: getConfiguredVaultCount(env),
 				now: Date.now(),
 			});
 		}
 
 		if (url.pathname === '/api/session' && request.method === 'GET') {
-			return json({ ok: true, authenticated: await isAuthed(request, env) });
+			const session = await getSession(request, env);
+			return json({ ok: true, authenticated: session.authenticated, vaultId: session.vaultId });
 		}
 
 		if (url.pathname === '/api/login' && request.method === 'POST') {
-			if (!env.APP_PASSWORD || !env.COOKIE_SECRET) {
+			if (!isAuthConfigured(env)) {
 				return json({ ok: false, error: 'server auth not configured' }, 500);
 			}
 
@@ -1004,7 +1032,8 @@ export default {
 			}
 
 			const body = (await request.json().catch(() => null)) as { password?: string } | null;
-			if (!body?.password || body.password !== env.APP_PASSWORD) {
+			const vaultId = body?.password ? await getVaultIdForPassword(env, body.password) : null;
+			if (!vaultId) {
 				const failure = await recordFailedLogin(env, rateLimit.key);
 				if (failure.locked) {
 					return tooManyLoginAttempts(failure.retryAfterSeconds);
@@ -1019,7 +1048,7 @@ export default {
 				{ ok: true },
 				200,
 				{
-					'set-cookie': `session=${await createSessionToken(env)}; HttpOnly; Secure; SameSite=Lax; Path=/; Max-Age=${SESSION_MAX_AGE_SECONDS}`,
+					'set-cookie': `session=${await createSessionToken(env, vaultId)}; HttpOnly; Secure; SameSite=Lax; Path=/; Max-Age=${SESSION_MAX_AGE_SECONDS}`,
 				}
 			);
 		}
@@ -1034,10 +1063,15 @@ export default {
 			);
 		}
 
+		if (url.pathname.startsWith('/api/') && !(await isAuthed(request, env))) {
+			return unauthorized();
+		}
+
 		if (url.pathname === '/api/crypto-config' && request.method === 'GET') {
+			const vaultId = await getAuthedVaultId(request, env);
 			return json({
 				ok: true,
-				vaultSalt: await getOrCreateVaultSalt(env),
+				vaultSalt: await getOrCreateVaultSalt(env, vaultId),
 				cipher: 'aes-gcm-256',
 				kdf: 'pbkdf2-sha256',
 				iterations: 250000,
@@ -1045,20 +1079,18 @@ export default {
 			});
 		}
 
-		if (url.pathname.startsWith('/api/') && !(await isAuthed(request, env))) {
-			return unauthorized();
-		}
-
 		if (url.pathname === '/api/notes' && request.method === 'GET') {
 			await ensureNotesSchema(env);
+			const vaultId = await getAuthedVaultId(request, env);
 			return json({
 				ok: true,
-				notes: await listNotes(env),
+				notes: await listNotes(env, vaultId),
 			});
 		}
 
 		if (url.pathname === '/api/notes' && request.method === 'POST') {
 			await ensureNotesSchema(env);
+			const vaultId = await getAuthedVaultId(request, env);
 			const body = (await request.json().catch(() => null)) as
 				| { title?: string; content?: string }
 				| null;
@@ -1073,6 +1105,7 @@ export default {
 			const now = Date.now();
 			const note: Note = {
 				id: crypto.randomUUID(),
+				vault_id: vaultId,
 				title,
 				content,
 				created_at: now,
@@ -1080,10 +1113,10 @@ export default {
 			};
 
 			await env.DB.prepare(
-				`INSERT INTO notes (id, title, content, created_at, updated_at)
-				 VALUES (?, ?, ?, ?, ?)`
+				`INSERT INTO notes (id, vault_id, title, content, created_at, updated_at)
+				 VALUES (?, ?, ?, ?, ?, ?)`
 			)
-				.bind(note.id, note.title, note.content, note.created_at, note.updated_at)
+				.bind(note.id, vaultId, note.title, note.content, note.created_at, note.updated_at)
 				.run();
 
 			return json({ ok: true, note }, 201);
@@ -1091,11 +1124,12 @@ export default {
 
 		if (url.pathname.startsWith('/api/notes/')) {
 			await ensureNotesSchema(env);
+			const vaultId = await getAuthedVaultId(request, env);
 			const id = decodeURIComponent(url.pathname.slice('/api/notes/'.length));
 			if (!id) return json({ ok: false, error: 'missing id' }, 400);
 
 			if (request.method === 'GET') {
-				const note = await getNote(env, id);
+				const note = await getNote(env, id, vaultId);
 				if (!note) return json({ ok: false, error: 'not_found' }, 404);
 				return json({ ok: true, note });
 			}
@@ -1108,23 +1142,23 @@ export default {
 				const title = body?.title?.trim() || '无标题';
 				const content = body?.content?.trim() || '';
 
-				const existing = await getNote(env, id);
+				const existing = await getNote(env, id, vaultId);
 				if (!existing) return json({ ok: false, error: 'not_found' }, 404);
 
 				await env.DB.prepare(
 					`UPDATE notes
 					 SET title = ?, content = ?, updated_at = ?
-					 WHERE id = ?`
+					 WHERE id = ? AND vault_id = ?`
 				)
-					.bind(title, content, Date.now(), id)
+					.bind(title, content, Date.now(), id, vaultId)
 					.run();
 
-				const note = await getNote(env, id);
+				const note = await getNote(env, id, vaultId);
 				return json({ ok: true, note });
 			}
 
 			if (request.method === 'DELETE') {
-				await env.DB.prepare('DELETE FROM notes WHERE id = ?').bind(id).run();
+				await env.DB.prepare('DELETE FROM notes WHERE id = ? AND vault_id = ?').bind(id, vaultId).run();
 				return json({ ok: true });
 			}
 		}

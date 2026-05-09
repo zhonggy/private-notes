@@ -1,6 +1,7 @@
 type AuthEnv = {
 	DB: D1Database;
 	APP_PASSWORD?: string;
+	APP_PASSWORDS?: string;
 	COOKIE_SECRET?: string;
 };
 
@@ -8,6 +9,12 @@ export const SESSION_MAX_AGE_SECONDS = 60 * 60 * 24 * 30;
 const LOGIN_MAX_FAILED_ATTEMPTS = 5;
 const LOGIN_RATE_LIMIT_WINDOW_MS = 15 * 60 * 1000;
 const LOGIN_LOCKOUT_MS = 15 * 60 * 1000;
+const DEFAULT_VAULT_ID = 'default';
+
+type SessionData = {
+	authenticated: boolean;
+	vaultId: string;
+};
 
 function getCookie(request: Request, name: string) {
 	const cookie = request.headers.get('cookie') || '';
@@ -58,12 +65,56 @@ function safeEqual(a: string, b: string) {
 	return diff === 0;
 }
 
-export async function createSessionToken(env: AuthEnv) {
+function normalizeVaultId(value: string) {
+	const normalized = value.trim().toLowerCase().replace(/[^a-z0-9_-]/g, '-').replace(/-+/g, '-');
+	return normalized.replace(/^-|-$/g, '') || DEFAULT_VAULT_ID;
+}
+
+function getVaultCredentials(env: AuthEnv) {
+	const credentials: Array<{ vaultId: string; password: string }> = [];
+	if (env.APP_PASSWORD) {
+		credentials.push({ vaultId: DEFAULT_VAULT_ID, password: env.APP_PASSWORD });
+	}
+
+	const extra = env.APP_PASSWORDS || '';
+	for (const item of extra.split(',')) {
+		const trimmed = item.trim();
+		if (!trimmed) continue;
+
+		const separatorIndex = trimmed.indexOf('=');
+		if (separatorIndex <= 0) continue;
+
+		const vaultId = normalizeVaultId(trimmed.slice(0, separatorIndex));
+		const password = trimmed.slice(separatorIndex + 1).trim();
+		if (!password) continue;
+		credentials.push({ vaultId, password });
+	}
+
+	return credentials;
+}
+
+export function isAuthConfigured(env: AuthEnv) {
+	return Boolean(env.COOKIE_SECRET && getVaultCredentials(env).length > 0);
+}
+
+export function getConfiguredVaultCount(env: AuthEnv) {
+	return getVaultCredentials(env).length;
+}
+
+export async function getVaultIdForPassword(env: AuthEnv, password: string) {
+	for (const credential of getVaultCredentials(env)) {
+		if (safeEqual(password, credential.password)) return credential.vaultId;
+	}
+	return null;
+}
+
+export async function createSessionToken(env: AuthEnv, vaultId = DEFAULT_VAULT_ID) {
 	if (!env.COOKIE_SECRET) return '';
 	const now = Math.floor(Date.now() / 1000);
 	const payload = base64UrlEncode(
 		JSON.stringify({
 			v: 1,
+			vaultId: normalizeVaultId(vaultId),
 			iat: now,
 			exp: now + SESSION_MAX_AGE_SECONDS,
 		})
@@ -73,25 +124,42 @@ export async function createSessionToken(env: AuthEnv) {
 }
 
 async function verifySessionToken(env: AuthEnv, token: string) {
-	if (!env.COOKIE_SECRET) return false;
+	if (!env.COOKIE_SECRET) return null;
 	const [payload, signature] = token.split('.');
-	if (!payload || !signature || token.split('.').length !== 2) return false;
+	if (!payload || !signature || token.split('.').length !== 2) return null;
 	const expected = await hmacSha256Base64Url(env.COOKIE_SECRET, payload);
-	if (!safeEqual(signature, expected)) return false;
+	if (!safeEqual(signature, expected)) return null;
 
 	try {
-		const data = JSON.parse(base64UrlDecode(payload)) as { exp?: number; v?: number };
-		return data.v === 1 && typeof data.exp === 'number' && data.exp > Math.floor(Date.now() / 1000);
+		const data = JSON.parse(base64UrlDecode(payload)) as { exp?: number; v?: number; vaultId?: string };
+		if (data.v !== 1 || typeof data.exp !== 'number' || data.exp <= Math.floor(Date.now() / 1000)) {
+			return null;
+		}
+		return normalizeVaultId(data.vaultId || DEFAULT_VAULT_ID);
 	} catch {
-		return false;
+		return null;
 	}
 }
 
-export async function isAuthed(request: Request, env: AuthEnv) {
-	if (!env.APP_PASSWORD || !env.COOKIE_SECRET) return true;
+export async function getSession(request: Request, env: AuthEnv): Promise<SessionData> {
+	if (!isAuthConfigured(env)) {
+		return { authenticated: true, vaultId: DEFAULT_VAULT_ID };
+	}
+
 	const session = getCookie(request, 'session');
-	if (!session) return false;
-	return verifySessionToken(env, session);
+	if (!session) return { authenticated: false, vaultId: DEFAULT_VAULT_ID };
+	const vaultId = await verifySessionToken(env, session);
+	return vaultId
+		? { authenticated: true, vaultId }
+		: { authenticated: false, vaultId: DEFAULT_VAULT_ID };
+}
+
+export async function isAuthed(request: Request, env: AuthEnv) {
+	return (await getSession(request, env)).authenticated;
+}
+
+export async function getAuthedVaultId(request: Request, env: AuthEnv) {
+	return (await getSession(request, env)).vaultId;
 }
 
 function getClientIp(request: Request) {

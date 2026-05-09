@@ -138,4 +138,68 @@ describe("private-notes worker", () => {
 
 		expect(lockedResponse.status).toBe(429);
 	});
+
+	it("isolates notes by login password vault", async () => {
+		const testEnv = {
+			...env,
+			APP_PASSWORD: "default-password",
+			APP_PASSWORDS: "guest=guest-password",
+			COOKIE_SECRET: `test-cookie-secret-${crypto.randomUUID()}`,
+		};
+
+		async function login(password: string) {
+			const request = new Request<unknown, IncomingRequestCfProperties>("http://example.com/api/login", {
+				method: "POST",
+				headers: {
+					"content-type": "application/json",
+					"cf-connecting-ip": `203.0.113.${password === "default-password" ? "21" : "22"}`,
+					"user-agent": `vault-test-${password}`,
+				},
+				body: JSON.stringify({ password }),
+			});
+			const ctx = createExecutionContext();
+			const response = await worker.fetch(request, testEnv, ctx);
+			await waitOnExecutionContext(ctx);
+			expect(response.status).toBe(200);
+			return response.headers.get("set-cookie") || "";
+		}
+
+		async function createNote(cookie: string, title: string) {
+			const request = new Request<unknown, IncomingRequestCfProperties>("http://example.com/api/notes", {
+				method: "POST",
+				headers: {
+					"content-type": "application/json",
+					cookie,
+				},
+				body: JSON.stringify({ title, content: `${title} content` }),
+			});
+			const ctx = createExecutionContext();
+			const response = await worker.fetch(request, testEnv, ctx);
+			await waitOnExecutionContext(ctx);
+			expect(response.status).toBe(201);
+		}
+
+		async function listTitles(cookie: string) {
+			const request = new Request<unknown, IncomingRequestCfProperties>("http://example.com/api/notes", {
+				headers: { cookie },
+			});
+			const ctx = createExecutionContext();
+			const response = await worker.fetch(request, testEnv, ctx);
+			await waitOnExecutionContext(ctx);
+			expect(response.status).toBe(200);
+			const data = (await response.json()) as { notes: Array<{ title: string }> };
+			return data.notes.map((note) => note.title);
+		}
+
+		const defaultCookie = await login("default-password");
+		const guestCookie = await login("guest-password");
+
+		await createNote(defaultCookie, "default-vault-note");
+		await createNote(guestCookie, "guest-vault-note");
+
+		expect(await listTitles(defaultCookie)).toContain("default-vault-note");
+		expect(await listTitles(defaultCookie)).not.toContain("guest-vault-note");
+		expect(await listTitles(guestCookie)).toContain("guest-vault-note");
+		expect(await listTitles(guestCookie)).not.toContain("default-vault-note");
+	});
 });
