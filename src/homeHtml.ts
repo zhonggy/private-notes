@@ -683,7 +683,6 @@ export const blogHomeHtml = `<!doctype html>
 
           <div class="login-actions">
             <button id="loginBtn" class="btn login-submit">进入笔记</button>
-            <button id="loginResetBtn" class="btn secondary login-submit hidden" type="button" style="margin-top:10px">忘记密码，清空旧笔记</button>
           </div>
           <div class="security-note">端到端加密开启后，服务器只保存密文；搜索会在本地浏览器里完成。忘记密码将无法恢复旧密文。</div>
           <div id="loginStatus" class="login-foot"></div>
@@ -711,14 +710,13 @@ export const blogHomeHtml = `<!doctype html>
 
         <section id="vaultPanel" class="vault-panel hidden">
           <h2 class="vault-panel-title">内容已加密</h2>
-          <p id="vaultPanelDesc" class="vault-panel-desc">请输入密码查看笔记内容。如果忘记了，只能清空旧密文后重新开始。</p>
+          <p id="vaultPanelDesc" class="vault-panel-desc">请输入密码查看笔记内容。忘记密码将无法在页面内恢复旧密文。</p>
           <div class="field-stack">
             <label class="field-label" for="vaultUnlockInput">密码</label>
             <input id="vaultUnlockInput" class="input" type="password" placeholder="输入密码" />
           </div>
           <div class="vault-panel-actions">
             <button id="unlockBtn" class="btn">解锁内容</button>
-            <button id="resetVaultBtn" class="btn danger">忘记密码，清空旧笔记</button>
           </div>
         </section>
 
@@ -783,7 +781,6 @@ export const blogHomeHtml = `<!doctype html>
         passwordInput: document.getElementById('passwordInput'),
         passwordHelp: document.getElementById('passwordHelp'),
         loginBtn: document.getElementById('loginBtn'),
-        loginResetBtn: document.getElementById('loginResetBtn'),
         loginStatus: document.getElementById('loginStatus'),
         topbar: document.getElementById('topbar'),
         searchInput: document.getElementById('searchInput'),
@@ -798,7 +795,6 @@ export const blogHomeHtml = `<!doctype html>
         vaultPanelDesc: document.getElementById('vaultPanelDesc'),
         vaultUnlockInput: document.getElementById('vaultUnlockInput'),
         unlockBtn: document.getElementById('unlockBtn'),
-        resetVaultBtn: document.getElementById('resetVaultBtn'),
         noteCount: document.getElementById('noteCount'),
         noteList: document.getElementById('noteList'),
         editorModal: document.getElementById('editorModal'),
@@ -849,7 +845,6 @@ export const blogHomeHtml = `<!doctype html>
         els.unlockBadge.classList.toggle('hidden', !unlockOnly);
         els.passwordInput.disabled = checking;
         els.loginBtn.disabled = checking;
-        els.loginResetBtn.classList.toggle('hidden', checking || !unlockOnly);
         if (checking) {
           els.loginTitle.textContent = '正在打开我的笔记';
           els.loginDesc.textContent = '正在检查当前设备的访问状态，页面会保持在原位。';
@@ -877,9 +872,9 @@ export const blogHomeHtml = `<!doctype html>
         els.newBtn.disabled = !state.vaultUnlocked;
         els.fabNewBtn.disabled = !state.vaultUnlocked;
         els.vaultPanelDesc.textContent = state.unlockError
-          ? state.unlockError + '。如果你已经忘记密码，只能清空旧密文后重新开始。'
+          ? state.unlockError + '。如果你已经忘记密码，旧密文无法在页面内恢复。'
           : state.noteCountMeta > 0
-            ? '你当前有 ' + state.noteCountMeta + ' 条已加密笔记。请输入密码查看内容；如果忘记了，只能清空旧密文后重新开始。'
+            ? '你当前有 ' + state.noteCountMeta + ' 条已加密笔记。请输入密码查看内容；忘记密码将无法在页面内恢复旧密文。'
             : '当前还没有可显示的解密内容。输入密码后可正常使用。';
       }
 
@@ -1340,15 +1335,6 @@ export const blogHomeHtml = `<!doctype html>
         await refreshNotes();
       }
 
-      async function resetEncryptedNotes() {
-        await api('/api/reset-encrypted-notes', { method: 'DELETE' });
-        state.notes = [];
-        state.allNotes = [];
-        state.noteCountMeta = 0;
-        state.expandedIds = new Set();
-        await refreshMeta();
-      }
-
       async function checkSession() {
         showChecking();
         const data = await api('/api/session');
@@ -1465,27 +1451,6 @@ export const blogHomeHtml = `<!doctype html>
             setStatus(error.message || '解锁失败');
           });
       };
-
-      function handleResetVault() {
-        if (!confirm('忘记密码后，旧的加密笔记无法恢复。确定清空当前加密笔记并重新开始吗？')) return;
-        resetEncryptedNotes()
-          .then(function () {
-            state.vaultUnlocked = false;
-            state.vaultKey = null;
-            state.unlockError = '';
-            clearSensitiveInputs();
-            updateVaultUi();
-            renderList();
-            showLogin();
-            setStatus('已清空旧密文笔记，可以重新开始');
-          })
-          .catch(function (error) {
-            setStatus(error.message || '重置失败');
-          });
-      }
-
-      els.resetVaultBtn.onclick = handleResetVault;
-      els.loginResetBtn.onclick = handleResetVault;
 
       els.fabTopBtn.onclick = function () {
         window.scrollTo({ top: 0, behavior: 'smooth' });

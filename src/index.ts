@@ -1057,12 +1057,6 @@ export default {
 			});
 		}
 
-		if (url.pathname === '/api/reset-encrypted-notes' && request.method === 'DELETE') {
-			await ensureNotesSchema(env);
-			await env.DB.prepare('DELETE FROM notes').run();
-			return json({ ok: true });
-		}
-
 		if (url.pathname === '/api/notes' && request.method === 'POST') {
 			await ensureNotesSchema(env);
 			const body = (await request.json().catch(() => null)) as
