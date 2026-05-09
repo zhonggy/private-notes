@@ -46,7 +46,7 @@ npx wrangler d1 create private-notes-db
 ### 4. 执行数据库迁移
 
 ```bash
-npx wrangler d1 migrations apply DB --remote
+npx wrangler d1 migrations apply DB --remote --yes
 ```
 
 ### 5. 设置 secrets
@@ -150,4 +150,5 @@ wrangler.jsonc
 - 搜索历史
 - 图片链接预览
 - 端到端加密版本
+
 
