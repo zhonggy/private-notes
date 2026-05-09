@@ -18,6 +18,12 @@
 			"database_id": "f0f38848-3593-47e5-8b24-18c4ffefff9c"
 		}
 	],
+	"r2_buckets": [
+		{
+			"binding": "IMAGES",
+			"bucket_name": "private-notes-images"
+		}
+	],
 	"observability": {
 		"enabled": true
 	},

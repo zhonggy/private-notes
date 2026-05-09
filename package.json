@@ -31,6 +31,9 @@
       },
       "APP_PASSWORDS": {
         "description": "Optional extra isolated vault passwords. Format: vault_id=password,guest=another-password."
+      },
+      "IMAGES": {
+        "description": "R2 bucket used to store client-side encrypted image blobs."
       }
     }
   }
